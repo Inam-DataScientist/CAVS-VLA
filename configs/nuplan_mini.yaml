@@ -1,0 +1,10 @@
+# The 64-log nuPlan mini split you currently have (debugging scale only).
+data:
+  nuplan_db_root: data/external/nuplan
+  nuplan_map_root: data/external/nuplan/maps
+  out_dir: data/cavs_v2_mini
+  window_stride_s: 0.5
+train:
+  batch_size: 128
+  epochs: 30
+  ckpt_dir: checkpoints/cavs_v2_mini

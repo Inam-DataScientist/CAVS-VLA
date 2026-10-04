@@ -1,0 +1,31 @@
+# Full-scale run (8 x A100/H100 class). Use with torchrun.
+data:
+  sources:
+  - nuplan
+  - waymo
+  nuplan_db_root: data/external/nuplan/splits/trainval
+  nuplan_map_root: data/external/nuplan/maps
+  waymo_root: data/external/womd/scenario
+  waymo_file_glob: '**/*.tfrecord*'
+  window_stride_s: 2.0
+  num_workers: 32
+  out_dir: data/cavs_v2_full
+model:
+  d_model: 256
+  n_heads: 8
+  enc_layers: 6
+  dec_layers: 3
+train:
+  batch_size: 256
+  epochs: 40
+  lr: 0.0005
+  num_workers: 12
+  warmup_steps: 3000
+  ckpt_dir: checkpoints/cavs_v2_full
+sim:
+  num_scenarios: 5000
+  batch_size: 64
+  seeds:
+  - 0
+  - 1
+  - 2

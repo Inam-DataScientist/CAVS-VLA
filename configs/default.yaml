@@ -1,0 +1,208 @@
+# CAVS-VLA v2 default configuration. Every key can be overridden on the command line:
+#   python -m cavs_vla train --config configs/default.yaml --set train.batch_size=256 train.lr=5e-4
+# Paths are relative to the directory you run from.
+#
+# Sections:
+#   data      leak-free scene construction (10 Hz, 1 s history, 8 s future, real HD maps)
+#   feat      featurisation scales and the action-token vocabulary (acceleration x curvature)
+#   model     policy network size
+#   train     optimisation, AMP, loss weights, counterexample-guided refinement
+#   hj        HJ reachability grid and the safety assumptions (control authority, adversary, w_bar)
+#   cert      perception-uncertainty box X0 for the neural certificate
+#   conformal prediction-set calibration
+#   shield    certify -> MPC -> re-certify -> fallback runtime
+#   stl       runtime specification thresholds
+#   sim       batched closed-loop log simulator (plant mismatch, latency, multi-CAV)
+#   carla     CARLA stress tests
+data:
+  dt: 0.1
+  hist_steps: 11
+  fut_steps: 80
+  max_actors: 64
+  max_polylines: 192
+  poly_points: 20
+  poly_chunk_len: 30.0
+  map_radius: 110.0
+  actor_radius: 100.0
+  window_stride_s: 1.0
+  max_windows_per_log: 100000
+  use_route: true
+  nuplan_db_root: data/external/nuplan
+  nuplan_map_root: data/external/nuplan/maps
+  nuplan_map_version: nuplan-maps-v1.0
+  map_backend: auto
+  json_map_path: ''
+  waymo_root: data/external/womd/scenario
+  waymo_file_glob: '**/*.tfrecord*'
+  waymo_max_files: 0
+  sources:
+  - nuplan
+  split_ratios:
+  - 0.8
+  - 0.1
+  - 0.1
+  split_seed: 42
+  split_file: ''
+  out_dir: data/cavs_v2
+  num_workers: 8
+  ego_length: 5.176
+  ego_width: 2.297
+  ego_rear_to_center: 1.461
+  hash_outputs: true
+feat:
+  num_agents: 32
+  num_polylines: 64
+  instr_len: 16
+  pos_scale: 50.0
+  vel_scale: 20.0
+  size_scale: 10.0
+  ego_history_dropout: 0.5
+  action_dt: 0.2
+  a_min: -8.0
+  a_max: 4.0
+  n_acc_bins: 25
+  kappa_max: 0.25
+  n_kappa_bins: 41
+  kappa_min_ds: 0.5
+model:
+  d_model: 192
+  n_heads: 6
+  enc_layers: 4
+  dec_layers: 2
+  ff_mult: 4
+  n_modes: 6
+  num_intents: 8
+  ln_eps: 1.0e-05
+train:
+  batch_size: 128
+  epochs: 30
+  lr: 0.0003
+  weight_decay: 0.01
+  warmup_steps: 1000
+  grad_clip: 1.0
+  amp: bf16
+  compile: false
+  seed: 42
+  num_workers: 8
+  log_every: 50
+  val_every: 1
+  max_train_batches: 0
+  max_val_batches: 0
+  ckpt_dir: checkpoints/cavs_v2
+  resume: ''
+  w_reg: 1.0
+  w_cls: 0.5
+  w_tok: 0.2
+  w_agent: 0.5
+  w_intent: 0.1
+  w_safe: 0.0
+  safe_margin: 0.5
+  ceg_epochs: 3
+  ceg_lr: 5.0e-05
+  ceg_hard_weight: 4.0
+  ceg_w_safe: 0.5
+hj:
+  d_lo: -2.0
+  d_hi: 100.0
+  n_d: 205
+  v_max: 30.0
+  n_v: 61
+  a_e_min: -7.0
+  a_e_max: 3.0
+  a_o_min: -8.0
+  a_o_max: 3.0
+  w_bar: 0.6
+  d_min: 0.5
+  horizon: 7.0
+  cfl: 0.45
+  table_path: artifacts/hj_table.npz
+cert:
+  eps_agent_pos: 0.3
+  eps_agent_vel: 0.5
+  eps_agent_heading_deg: 3.0
+  eps_ego_speed: 0.2
+  eps_map_pos: 0.2
+  enabled: true
+conformal:
+  alpha: 0.05
+  min_scale: 0.2
+  table_path: artifacts/conformal.json
+  max_batches: 200
+shield:
+  commit_s: 0.3
+  check_horizon_s: 6.0
+  hj_margin: 0.5
+  corridor_margin: 0.4
+  lead_heading_deg: 35.0
+  max_interactions: 12
+  time_margin_s: 0.5
+  mpc_steps: 20
+  mpc_outer: 4
+  mpc_inner: 20
+  mpc_lr: 0.15
+  w_track: 1.0
+  w_ctrl_a: 0.3
+  w_ctrl_k: 50.0
+  w_jerk: 0.1
+  rho0: 5.0
+  fallback_candidates: 25
+  rear_soft_weight: 0.5
+stl:
+  d_min: 0.5
+  v_max: 25.0
+  lane_dev_max: 2.5
+sim:
+  num_scenarios: 1000
+  batch_size: 32
+  split: test
+  reactive: true
+  idm_T: 1.5
+  idm_a: 1.5
+  idm_b: 2.0
+  idm_s0: 2.0
+  idm_delta: 4.0
+  tau_a: 0.1
+  tau_k: 0.05
+  accel_noise: 0.2
+  delay_steps: 0
+  replan_interval: 1
+  latency_steps: 0
+  num_controlled: 1
+  comm_age_steps: 1
+  methods:
+  - B0
+  - B1
+  - B2
+  - B3
+  - B4
+  - B5
+  - B6
+  - B7
+  seeds:
+  - 0
+  - 1
+  - 2
+  out_dir: results/closed_loop
+  collision_ignore_static_below_speed: 0.0
+  lane_half_width: 1.75
+  offroad_tolerance: 0.75
+  deadlock_s: 5.0
+carla:
+  host: localhost
+  port: 2000
+  tm_port: 8000
+  town: Town05
+  dt: 0.1
+  episodes_per_scenario: 20
+  scenarios:
+  - lead_brake
+  - cut_in
+  - pedestrian
+  - dense
+  episode_seconds: 30.0
+  npc_vehicles: 40
+  method: B7
+  out_dir: results/carla
+  low_level_envelope: ''
+  speed_kp: 0.6
+  speed_ki: 0.05
