@@ -1,173 +1,1455 @@
-# SafeLand: Shielded Reinforcement Learning with Temporal-Logic Guarantees for UAV Landing
+# CAVS-VLA v2
 
-A UAV must land on a pad under wind gusts and a finite battery. It must never enter a no-fly zone, hit a building, leave the geofence, touch down off a pad, or run out of battery, and once its battery is low it must land within a deadline. The agent learns by tabular Q-learning purely from its own simulator; **no dataset is used**. Safety comes from formal methods, **not** from control barrier functions:
+### Compositional Safety for Multi-Agent, Language-Conditioned Driving Policies
 
-1. **LTL → monitor.** The safety requirement is written in LTL and compiled into a deterministic monitor by formula progression.
-2. **Shield synthesis.** A safety game on the product MDP (world × monitor) yields a shield that removes every action that could violate the specification under *any* gust sequence.
-3. **Shielded RL.** Q-learning explores and acts only through the shield, so it never violates the specification, *not even during training*.
-4. **Certification.** The learned policy is model-checked exactly: **CTL** on the closed-loop Kripke structure (worst case over gusts) and **PCTL** on the closed-loop Markov chain (gust probabilities). This is cross-checked by statistical model checking that shares no transition tables with the exact checker.
+<div align="center">
 
-Everything is pure NumPy/SciPy, CPU-only, and fully reproducible (`scripts/reproduce.sh`).
+[![Python](https://img.shields.io/badge/Python-3.10-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![PyTorch](https://img.shields.io/badge/PyTorch-supported-EE4C2C?logo=pytorch&logoColor=white)](https://pytorch.org/)
+[![nuPlan](https://img.shields.io/badge/nuPlan-supported-1f6feb)](#data)
+[![Waymo](https://img.shields.io/badge/WOMD-supported-1f6feb)](#data)
+[![CARLA](https://img.shields.io/badge/CARLA-supported-2ea44f)](#carla)
+[![Safety](https://img.shields.io/badge/safety-certified%20stack-critical-b31b1b)](#safety-stack)
+[![License](https://img.shields.io/badge/license-see%20LICENSE-lightgrey)](LICENSE)
+
+</div>
 
 ---
 
-## 1. Model
+## Overview
 
-**World MDP** $\mathcal M = (S, A, P, L)$.
-- Flying states are $s=(x,y,z,b)$ on a $W\times D$ grid, altitude $z\in\{1..Z\}$, battery $b\in\{1..B\}$.
-- There are six absorbing sinks: *landed* (the goal) and *crash, collision, nfz, geofence, empty* (violations).
-- Actions $A=\{N,S,E,W,\text{HOVER},\text{UP},\text{DOWN}\}$, each costing $\ge 1$ battery unit.
-- Gusts: after the commanded move, if the new altitude is $\ge z_w$, a gust displaces the vehicle one cell along $\mathbf w$ with probability $p_w$.
-- Labels: $L(s)\subseteq\{\textit{airborne, low, landed, crash, collision, nfz, geofence, empty, terminal, violation}\}$.
+**CAVS-VLA v2** is a research implementation for **multi-agent,
+language-conditioned autonomous driving with compositional safety
+assurance**.
 
-*Termination.* Battery strictly decreases on every flying step, so the flying part of $\mathcal M$ is a DAG and every run is absorbed within $B$ steps. All fixed points below are therefore exact after at most $B+1$ iterations (29 on the default world).
+The repository combines a learned driving policy with independent
+verification, reachability analysis, uncertainty calibration, predictive
+control, and runtime safety shielding.
 
-**Specification** (default, `configs/default.yaml`):
+The central design principle is:
 
-$$\varphi \;=\; \mathbf G(\lnot crash \wedge \lnot collision \wedge \lnot nfz \wedge \lnot geofence \wedge \lnot empty)\;\wedge\;\mathbf G\big(low \rightarrow \mathbf F_{\le 8}\, landed\big)$$
+> **The learned policy proposes behavior. The safety stack determines whether
+> that behavior can be executed safely.**
 
-## 2. Method
+The implementation is designed so that the learned policy and the
+safety-critical components remain modular.
 
-**Monitor by progression** (Bacchus & Kabanza 2000):
-$\text{prog}(\mathbf G\psi,\sigma)=\text{prog}(\psi,\sigma)\wedge\mathbf G\psi$, $\text{prog}(\mathbf F_{\le k}\psi,\sigma)=\text{prog}(\psi,\sigma)\vee\mathbf F_{\le k-1}\psi$, etc.
-- Formulas are kept in negation normal form, and smart constructors simplify on the fly: complementary literals collapse, and bounded operators merge to the tightest deadline.
-- Exploring progression over the world's label alphabet yields a deterministic monitor. For $\varphi$ above it has **11 states**, one of them the violation state `false`. Run `python -m safeland spec` to print it.
+```text
+                         CAVS-VLA v2
+                              │
+                              ▼
+                  ┌─────────────────────┐
+                  │   Scene / Context   │
+                  │  nuPlan / WOMD /    │
+                  │       CARLA         │
+                  └──────────┬──────────┘
+                             │
+                             ▼
+                  ┌─────────────────────┐
+                  │   VLA Policy        │
+                  │                     │
+                  │  Action Tokens      │
+                  │  (acceleration,     │
+                  │   curvature)        │
+                  └──────────┬──────────┘
+                             │
+                             ▼
+                  ┌─────────────────────┐
+                  │ Neural Verification │
+                  │                     │
+                  │   IBP / X0 bounds   │
+                  └──────────┬──────────┘
+                             │
+                             ▼
+                  ┌─────────────────────┐
+                  │   Safety Analysis   │
+                  │                     │
+                  │ HJ Reachability     │
+                  │ Conformal Sets      │
+                  │ Interaction Bounds  │
+                  └──────────┬──────────┘
+                             │
+                             ▼
+                     ┌───────────────┐
+                     │  CERTIFIED?   │
+                     └───────┬───────┘
+                         YES  │  NO
+                              │
+             ┌────────────────┘
+             ▼
+       Execute Proposal
 
-**Product** $\mathcal M\otimes\mathcal A_\varphi$:
-- States $(s,q)$, with transitions $(s,q)\xrightarrow{a}(s', \delta(q, L(s')))$.
-- *Bad* states are those with $q=\texttt{false}$, so $\varphi$ holds iff no bad state is visited.
-- The default world has 84,546 product states.
+                              NO
+                              │
+                              ▼
+                    ┌──────────────────┐
+                    │ Predictive MPC   │
+                    └────────┬─────────┘
+                             │
+                       Re-certify
+                             │
+                    ┌────────┴────────┐
+                    │                 │
+                   YES               NO
+                    │                 │
+                    ▼                 ▼
+              Execute MPC       HJ Backup /
+                                Emergency Brake
+````
 
-**Sure shield (safety game; gusts adversarial).**
+---
 
-$$W_0=\lnot\textit{Bad},\qquad W_{i+1}=\{v\in W_i:\exists a\;\forall v'\in\operatorname{supp}P(\cdot\mid v,a):\,v'\in W_i\},\qquad W=\textstyle\bigcap_i W_i,$$
+# ✨ Key Components
 
-$$\text{allowed}(v)=\{a:\operatorname{supp}P(\cdot\mid v,a)\subseteq W\}.$$
+| Component                    | Purpose                                                                          |
+| :--------------------------- | :------------------------------------------------------------------------------- |
+| **Leak-Free Data Pipeline**  | Builds temporally valid training inputs from nuPlan and WOMD                     |
+| **Multi-Agent Policy**       | Predicts driving behavior from scene context                                     |
+| **Action-Token Decoder**     | Produces discrete action representations for acceleration and curvature          |
+| **IBP Verification**         | Computes certified neural output bounds                                          |
+| **X0 Control Set**           | Determines the set of controls compatible with the certified input region        |
+| **HJ Reachability**          | Computes conservative safety information for longitudinal interactions           |
+| **Conformal Prediction**     | Produces calibrated prediction sets for other agents                             |
+| **Predictive Safety Shield** | Combines certificates, interaction bounds, MPC, and backup control               |
+| **MPC**                      | Searches for a locally feasible alternative when the proposal is not certifiable |
+| **HJ Backup**                | Provides a least-restrictive safety fallback                                     |
+| **CARLA Bridge**             | Enables closed-loop stress testing with a simulator                              |
+| **nuPlan Adapter**           | Connects the policy and safety stack to the nuPlan planner interface             |
+| **CEG Refinement**           | Mines failures and feeds train-split counterexamples back into refinement        |
+| **Self-Test Suite**          | Verifies core pipeline wiring before expensive experiments                       |
 
-> **Theorem 1 (sure safety, during training and deployment).** If the initial product state lies in $W$ and every executed action is in $\text{allowed}$, then every run satisfies $\varphi$. This holds for any learning algorithm, any exploration noise and any gust sequence.
-> *Proof.* $W\cap\textit{Bad}=\emptyset$ and $W$ is closed under allowed actions; induction on time. ∎
->
-> **Proposition 2 (maximal permissiveness).** $W$ is the complement of the adversary's attractor to *Bad*. Hence no shield with the sure guarantee can allow more actions in any state.
+---
 
-The guarantee does not rest on trusting the fixed-point code. `check_certificate` independently re-checks both proof obligations on the computed arrays: $W\cap Bad=\emptyset$, and every allowed action keeps every successor in $W$. The test suite also checks Proposition 2 against an independently coded attractor.
+# 🛡️ Safety Stack
 
-**Probabilistic shield** (Jansen et al. 2020): $V(v)=\max_\pi \Pr_v^\pi[\mathbf G\lnot Bad]$ (greatest fixed point), and $\text{allowed}_\lambda(v)=\{a: Q(v,a)\ge\lambda\max_{a'}Q(v,a')\}$ with $\lambda=0.95$. It is more permissive than the sure shield, but only bounds the risk.
+The safety stack is deliberately separated from the learned policy.
 
-**Shielded Q-learning** (preemptive shielding, Alshiekh et al. 2018):
-- ε-greedy action choice over $\text{allowed}(v)$.
-- Bootstrap target $r+\gamma\max_{a'\in\text{allowed}(v')}Q(v',a')$.
-- Reward: +10 for a safe landing, −10 for a violation, −0.1 per step.
+A proposed trajectory passes through the following stages:
 
-**Certification of the deployed greedy policy $\pi$.**
-- *CTL* on the Kripke structure $K_\pi$ (gusts as nondeterminism): `AG !spec_violated`, `AF landed`, `EF landed`, `A[!spec_violated U landed]`. EU is computed as a least fixed point and EG as a greatest fixed point.
-- *PCTL* on the Markov chain $D_\pi$: `P=?[!spec_violated U landed]`, `P=?[F spec_violated]`, `P=?[F landed]`, `R=?[F terminal]`. These use graph pre-computation of the probability-0 and probability-1 states, then a sparse linear solve (Baier & Katoen 2008, §10.1).
-- *SMC cross-check:* 2,000 runs with a table-free world sampler and direct LTL progression, with a Clopper–Pearson interval.
-- *Counterexample:* if `AG !spec_violated` fails, the shortest gust sequence that leads to a violation is returned.
+```text
+Policy Proposal
+      │
+      ▼
+┌──────────────────────┐
+│ Neural Output Bounds │
+│       (IBP)          │
+└──────────┬───────────┘
+           │
+           ▼
+┌──────────────────────┐
+│   Certified Control  │
+│        Set X0        │
+└──────────┬───────────┘
+           │
+           ▼
+┌──────────────────────┐
+│    Interval Tube     │
+│   over Horizon       │
+└──────────┬───────────┘
+           │
+           ├───────────────┐
+           ▼               ▼
+     HJ Reachability   Conformal Sets
+           │               │
+           └───────┬───────┘
+                   ▼
+          Safety Certificate
+                   │
+             ┌─────┴─────┐
+             │           │
+            YES          NO
+             │           │
+             ▼           ▼
+          Execute       MPC
+                         │
+                         ▼
+                    Re-certify
+                         │
+                   ┌─────┴─────┐
+                   │           │
+                  YES          NO
+                   │           │
+                   ▼           ▼
+                Execute     HJ Backup /
+                            Emergency Brake
+```
 
-## 3. Results
+The runtime decision hierarchy is therefore:
 
-Default world (8×8, 4 altitudes, battery 30, two pads, a 2×2 no-fly zone, three buildings, gust probability 0.2 toward +x), 649 start states, 100,000 training episodes, **10 seeds**. Each value is mean ± 95% t-CI, and every probability is exact (PCTL), averaged over the uniform start distribution. Regenerate with `python -m safeland run --set experiment.name=main`.
+```text
+1. Execute the learned proposal if certified.
+2. Otherwise search for a locally safe MPC alternative.
+3. Re-certify the MPC solution.
+4. If certification still fails, use the HJ backup.
+5. Emergency braking remains available as the final fallback.
+```
 
-| Method | Training violations | P(safe landing) | worst-start P(safe landing) | P(spec violated) | `AG safe` holds (fraction of starts) | E[steps] |
-|---|---|---|---|---|---|---|
-| Unshielded Q-learning | 48,588 ± 193 | 0.9995 ± 0.0003 | 0.849 ± 0.206 | 4.9e-4 ± 3.3e-4 | 0.170 ± 0.039 | 8.34 ± 0.10 |
-| Probabilistic shield (λ = 0.95) | 701 ± 26 | 0.9999 ± 0.0000 | 0.9967 ± 0.0040 | 9.8e-5 ± 2.8e-5 | 0.154 ± 0.022 | 9.34 ± 0.16 |
-| **Sure shield** | **0 ± 0** | **1.0000** | **1.0000** | **1.2e-9** | **0.847** (= share of starts in $W$) | 9.01 ± 0.09 |
+The implementation is designed so that **MPC convergence is not itself the
+basis of the safety decision**; the safety decision is based on the
+specified model, disturbance, actuator, input, and prediction assumptions.
 
-**What the shield gives and what learning gives** (exact, the same shield with uniform-random actions instead of the learned policy):
+---
 
-| Shield | learned P(safe landing) | random P(safe landing) | learned E[steps] | random E[steps] |
-|---|---|---|---|---|
-| none | 0.9995 | 0.0026 | 8.34 | 6.07 |
-| probabilistic | 0.9999 | 0.9826 | 9.34 | 21.27 |
-| sure | 1.0000 | 1.0000 | 9.01 | 21.50 |
+# 🧠 Policy Interface
 
-Findings:
-1. **Safety during learning.** Unshielded Q-learning commits about 48,600 violations (crashes, NFZ incursions, geofence breaches) before converging. The sure shield commits none in all 10 seeds, as Theorem 1 predicts, and the probabilistic shield commits about 700 (`results/main/training.png`).
-2. **Average-case vs. worst-case safety.** The unshielded policy looks excellent on average (P = 0.9995), yet it satisfies `AG !spec_violated` from only 17% of start states: some gust sequence breaks it almost everywhere. The probabilistic shield improves the probability but **not** the worst case (15%). Only the sure shield gives a worst-case guarantee, and it does so exactly on its winning region (84.7% of starts).
-3. **The shield supplies safety; RL supplies efficiency.** Random actions inside the sure shield already land safely with probability 1, but take 21.5 steps. The learned policy needs 9.0, about 2.4× less flight time and battery.
-4. **An interpretable by-product: the wind-aware battery reserve map** (`results/main/reserve_map.png`, `python -m safeland shield`). It gives, for each cell, the minimum battery from which safety is guaranteed. The shield discovers on its own that the cell just upwind of the no-fly zone is never safe, because a gust pushes into the NFZ and the building blocks the only escape. It also finds that the east boundary column is a trap under persistent gusts, and that a cell next to the NFZ needs a 13-unit reserve while its neighbours need 7.
-5. **Price of the sure guarantee.** The sure shield treats gusts as adversarial, so 15% of start states (the east column, and cells that only escape by flying into the wind) have no guarantee at all. The probabilistic shield covers them, with worst-start success 0.9967. This is the classic sure-vs-probabilistic trade-off, quantified here.
+The learned policy operates on a structured multi-agent scene representation.
 
-**Robustness to gust probability** (`results/wind_sweep.md`; p = 0.2 uses 10 seeds, the others 5):
+The policy produces:
 
-| gust p | method | training violations | P(safe landing) | worst-start P | `AG safe` (frac.) | E[steps] |
-|---|---|---|---|---|---|---|
-| 0.1 | unshielded | 46,173 ± 222 | 0.9988 | 0.888 | 0.116 | 8.09 |
-| 0.1 | probabilistic | 400 ± 32 | 0.9999 | 0.988 | 0.126 | 9.27 |
-| 0.1 | sure | **0** | 1.0000 | 1.000 | 0.847 | 8.74 |
-| 0.2 | unshielded | 48,588 ± 192 | 0.9995 | 0.849 | 0.170 | 8.34 |
-| 0.2 | probabilistic | 701 ± 26 | 0.9999 | 0.997 | 0.154 | 9.34 |
-| 0.2 | sure | **0** | 1.0000 | 1.000 | 0.847 | 9.01 |
-| 0.3 | unshielded | 50,974 ± 204 | 0.9993 | 0.809 | 0.248 | 8.62 |
-| 0.3 | probabilistic | 549 ± 35 | 0.9998 | 0.997 | 0.215 | 9.93 |
-| 0.3 | sure | **0** | 1.0000 | 1.000 | 0.847 | 8.92 |
-| 0.4 | unshielded | 53,518 ± 394 | 0.9978 | 0.607 | 0.359 | 8.88 |
-| 0.4 | probabilistic | 623 ± 42 | 0.9997 | 0.995 | 0.197 | 10.47 |
-| 0.4 | sure | **0** | 1.0000 | 0.9997 | 0.847 | 8.86 |
+```text
+                    Policy Output
+                         │
+             ┌───────────┴───────────┐
+             │                       │
+             ▼                       ▼
+       Action Tokens            Agent Prediction
+             │                       │
+       ┌─────┴─────┐                 │
+       │           │                 ▼
+       ▼           ▼          Uncertainty /
+ Acceleration  Curvature      Prediction Scale
+```
 
-As gusts get more likely, unshielded learning makes more violations and its worst-start performance collapses (0.888 → 0.607). The sure shield stays at zero violations, and its winning region is *identical* for every p (84.7% of starts), because sure safety depends only on whether a gust is possible, not on how likely it is. The probabilistic shield's region with V = 1 shrinks from 100% to 86% of starts.
+The action representation is based on:
 
-## 4. Usage
+```text
+u = (a, κ)
+```
+
+where:
+
+* `a` = longitudinal acceleration
+* `κ` = curvature
+
+The policy also produces trajectory and other-agent prediction outputs
+used by the downstream safety stack.
+
+---
+
+# 📐 Core Tensor Contracts
+
+The repository uses fixed tensor contracts to keep the data pipeline,
+training model, simulation, verification, and safety stack consistent.
+
+`B` denotes batch size.
+
+| Tensor           |       Shape       | Description                   |
+| :--------------- | :---------------: | :---------------------------- |
+| `traj`           |  `(B, 64, 91, 7)` | Actor trajectories            |
+| `valid`          |   `(B, 64, 91)`   | Actor validity mask           |
+| `poly`           | `(B, 192, 20, 2)` | Map polylines                 |
+| `poly_attr`      |   `(B, 192, 6)`   | Map attributes                |
+| `poly_tl`        |   `(B, 192, 91)`  | Traffic-light state           |
+| `feat.ego`       |    `(B, 11, 7)`   | Ego features                  |
+| `feat.agents`    | `(B, 32, 11, 12)` | Agent features                |
+| `feat.map`       |  `(B, 64, 20, 4)` | Map features                  |
+| `map_attr`       |    `(B, 64, 9)`   | Map attributes                |
+| `out.ctrl`       |  `(B, 6, 40, 2)`  | Control outputs               |
+| `out.traj`       |  `(B, 6, 80, 4)`  | Predicted trajectories        |
+| `acc_logits`     |  `(B, 6, 40, 25)` | Acceleration action tokens    |
+| `kap_logits`     |  `(B, 6, 40, 41)` | Curvature action tokens       |
+| `agent_pred`     |  `(B, 32, 80, 2)` | Other-agent prediction        |
+| `agent_logscale` |  `(B, 32, 80, 2)` | Prediction uncertainty        |
+| `cert.u_lo`      |    `(B, 40, 2)`   | Certified lower control bound |
+| `cert.u_hi`      |    `(B, 40, 2)`   | Certified upper control bound |
+
+The raw trajectory representation is:
+
+```text
+[x, y, yaw, vx, vy, length, width]
+```
+
+with the ego vehicle represented by actor `0`.
+
+The observer frame is defined relative to the ego vehicle at the reference
+time.
+
+---
+
+# 📂 Repository Structure
+
+```text
+CAVS-VLA/
+│
+├── cavs_vla/
+│   │
+│   ├── data/
+│   │   ├── nuplan.py
+│   │   ├── waymo.py
+│   │   ├── maps.py
+│   │   ├── scene.py
+│   │   └── build.py
+│   │
+│   ├── model/
+│   │   ├── layers.py
+│   │   └── vla.py
+│   │
+│   ├── safety/
+│   │   ├── hj.py
+│   │   ├── conformal.py
+│   │   ├── verifier.py
+│   │   └── shield.py
+│   │
+│   ├── sim/
+│   │   ├── logsim.py
+│   │   ├── metrics.py
+│   │   └── carla_env.py
+│   │
+│   ├── dynamics.py
+│   ├── features.py
+│   ├── nuplan_planner.py
+│   ├── legacy_probe.py
+│   └── selftest.py
+│
+├── configs/
+│   ├── default.yaml
+│   ├── nuplan_mini.yaml
+│   └── full_nuplan_womd.yaml
+│
+├── tests/
+│   └── test_numpy_stack.py
+│
+├── scripts/
+│   └── run_pipeline.sh
+│
+├── data/
+│   └── external/
+│
+├── results/
+│
+├── requirements.txt
+├── LICENSE
+└── README.md
+```
+
+---
+
+# 🔧 Module Guide
+
+## Data
+
+### `cavs_vla/data/nuplan.py`
+
+Reads nuPlan logs and extracts the scene information required by the pipeline.
+
+Includes:
+
+* lidar sweeps
+* ego pose
+* dynamic actors
+* static objects
+* traffic lights
+* route information
+
+---
+
+### `cavs_vla/data/waymo.py`
+
+Reads Waymo Open Motion Dataset Scenario records.
+
+The implementation uses the Scenario representation without requiring TensorFlow
+for the reader itself.
+
+---
+
+### `cavs_vla/data/maps.py`
+
+Provides map access through the supported nuPlan map interfaces:
+
+* nuPlan devkit
+* GeoPackage
+* compatible JSON/map representations
+
+---
+
+### `cavs_vla/data/scene.py`
+
+Converts raw logs into fixed-shape scene representations.
+
+The scene representation is generated in the ego-at-reference-time coordinate
+frame.
+
+---
+
+### `cavs_vla/data/build.py`
+
+Builds the processed dataset and manages:
+
+* log-disjoint splits
+* per-log staging
+* memory-mapped merging
+* dataset manifests
+* hashes
+* reproducibility metadata
+
+---
+
+# 🤖 Model
+
+## `cavs_vla/model/vla.py`
+
+Main policy implementation.
+
+The model contains the policy and prediction heads used by the downstream
+safety stack.
+
+The architecture is designed to expose verification-friendly operations.
+
+---
+
+## `cavs_vla/model/layers.py`
+
+Contains the neural-network building blocks.
+
+The layers provide both normal forward operations and corresponding
+verification-compatible implementations where required by the IBP pipeline.
+
+---
+
+# 🛡️ Safety
+
+## `cavs_vla/safety/hj.py`
+
+Hamilton-Jacobi reachability implementation.
+
+Provides:
+
+* 3-D HJ safety computation
+* conservative envelopes
+* validation routines
+* differentiable lookup functionality
+
+---
+
+## `cavs_vla/safety/conformal.py`
+
+Conformal prediction utilities for other-agent prediction.
+
+Prediction sets are generated separately by agent type and can be used by the
+runtime safety layer.
+
+---
+
+## `cavs_vla/safety/verifier.py`
+
+Neural-output verification and certified control-set construction.
+
+Responsible for:
+
+* physical input region `X0`
+* IBP bounds
+* certified control bounds
+* ONNX export
+* VNNLIB generation
+
+---
+
+## `cavs_vla/safety/shield.py`
+
+Runtime safety integration.
+
+Combines:
+
+* policy proposals
+* certified control regions
+* interval trajectory tubes
+* interaction constraints
+* HJ information
+* conformal prediction sets
+* MPC
+* HJ fallback
+
+---
+
+# 🚗 Dynamics
+
+## `cavs_vla/dynamics.py`
+
+Contains the vehicle dynamics and disturbance model used by the safety stack.
+
+The implementation includes:
+
+* kinematic bicycle dynamics
+* actuator lag
+* noise
+* latency/delay
+* disturbance estimation
+
+---
+
+# 🧪 Simulation
+
+## `cavs_vla/sim/logsim.py`
+
+Batched closed-loop simulator for controlled experiments.
+
+Supports:
+
+* IDM-style agents
+* control latency
+* replanning intervals
+* multiple controlled CAVs
+* plan exchange
+
+---
+
+## `cavs_vla/sim/metrics.py`
+
+Evaluation and statistical analysis utilities.
+
+Supports:
+
+* confidence intervals
+* paired comparisons
+* statistical tests
+* closed-loop metrics
+
+---
+
+## `cavs_vla/sim/carla_env.py`
+
+CARLA integration.
+
+Provides:
+
+* simulator bridge
+* scenario execution
+* safety sensors
+* disturbance measurement
+* stress-testing infrastructure
+
+---
+
+# 🔌 Planner Integration
+
+## `cavs_vla/nuplan_planner.py`
+
+Provides the nuPlan planner adapter.
+
+The adapter exposes the system through the nuPlan
+`AbstractPlanner` interface.
+
+This allows the safety-aware policy to be connected to official nuPlan
+closed-loop evaluation.
+
+---
+
+# 🔎 Leakage Detection
+
+## `cavs_vla/legacy_probe.py`
+
+Provides the legacy-pipeline probe used to inspect the previous implementation.
+
+The purpose is to quantify information leakage in the old pipeline and verify
+that the new data construction does not depend on future trajectory information.
+
+---
+
+# ✅ Self-Test
+
+## `cavs_vla/selftest.py`
+
+Runs the end-to-end synthetic-data checks required before expensive experiments.
+
+The self-test should pass before proceeding to dataset construction or training.
+
+Expected result:
+
+```text
+SELFTEST PASSED
+```
+
+---
+
+# 💾 Data
+
+The repository does **not** redistribute the original nuPlan or Waymo datasets.
+
+Users must obtain the corresponding datasets according to their respective
+licenses and terms.
+
+Expected directory structure:
+
+```text
+data/
+└── external/
+    │
+    ├── nuplan/
+    │   ├── **/*.db
+    │   └── maps/
+    │       └── <location>/<version>/map.gpkg
+    │
+    └── womd/
+        └── scenario/
+            ├── training/
+            └── validation/
+```
+
+Paths are configurable through the YAML configuration files in:
+
+```text
+configs/
+```
+
+---
+
+# 📦 Installation
+
+## 1. Create the environment
 
 ```bash
-pip install -e ".[dev]"
-pytest                                               # 49 tests, ~30 s
-python -m safeland shield                            # certificate + battery reserve map
-python -m safeland spec                              # print the LTL monitor
-python -m safeland run --set experiment.name=main    # full experiment (~12 min, CPU)
-python -m safeland run --set world.wind_prob=0.4 --set rl.episodes=50000
-python -m safeland summarize results/main            # rebuild tables from saved runs
-python -m safeland plot results/main                 # redraw figures from logged data
+conda create -n cavs2 python=3.10 -y
+conda activate cavs2
 ```
 
-Every run writes `config.yaml` (with a config digest), `environment.json` (versions and git commit), `shields.json` (synthesis statistics and certificate), `baselines.json`, and per seed `metrics.json`, `train_curve.csv` and `policy.npy`. Change the specification without touching code, for example `--set 'spec.safety_ltl=G(!crash & !nfz) & G(low -> F[<=5] landed)'`. Unknown atoms and malformed formulas are rejected.
+---
 
-## 5. Repository layout
+## 2. Install Python dependencies
 
-```
-src/safeland/
-  config.py        frozen, validated dataclass configs (YAML + key=value overrides)
-  world.py         UAV safe-landing MDP (wind, battery, NFZ, buildings, geofence)
-  logic/ltl.py     LTL syntax, parser, progression, monitor construction
-  logic/ctl.py     CTL parser + explicit-state model checker (EX, EU, EG fixed points)
-  logic/pctl.py    PCTL on DTMCs: until, bounded until, globally, expected steps
-  product.py       world × monitor product MDP
-  shield.py        sure / probabilistic shield synthesis, certificate, reserve map
-  rl.py            shielded tabular Q-learning (no dataset)
-  verification.py  closed-loop DTMC/Kripke, CTL+PCTL certification, SMC, counterexamples
-  experiment.py    seeds × methods runner, artifacts, 95% CIs, summary tables
-  plots.py         figures from logged results only
-tests/             49 tests (see below)
-configs/default.yaml, scripts/reproduce.sh, .github/workflows/ci.yml
+```bash
+pip install -r requirements.txt
 ```
 
-**What the tests establish** (not just "it runs"):
-- The progression theorem $w\models\varphi \iff w^{1}\models\text{prog}(\varphi,w_0)$ on 3,000 random formulas × lasso words, checked against an independent LTL semantics.
-- Negation correctness on random formulas.
-- Every CTL operator (EX, AX, EU, AU, EG, AG, EF, AF) against brute-force path enumeration on random Kripke structures.
-- PCTL until and expected steps against long-horizon iteration on random DTMCs.
-- Shield maximality against an independent attractor computation.
-- The certificate rejects a deliberately broken shield.
-- Shielded random play never violates the specification.
-- The CTL checker confirms `AG !spec_violated` on every winning start of a learned sure-shield policy, cross-checking Theorem 1 with a second algorithm.
-- SMC agrees with exact PCTL.
-- Transition tables match the direct dynamics, and training is deterministic.
+The core environment uses packages such as:
 
-## 6. Positioning and limitations (read before writing the paper)
+* PyTorch
+* NumPy
+* SciPy
+* PyYAML
 
-- **The building blocks are established.** Shield synthesis (Bloem et al. 2015; Alshiekh et al. 2018), probabilistic shields (Jansen et al. 2020), LTL progression and CTL/PCTL model checking are all standard. The contribution of this repository is the *integrated, end-to-end-verified pipeline for UAV landing*: a battery- and deadline-aware temporal specification, shield synthesis that yields an interpretable wind-aware reserve map, zero-violation learning, and post-hoc exact CTL/PCTL certification with an independent SMC cross-check and a quantified sure-vs-probabilistic trade-off. As it stands, this is realistic for a workshop or application-track paper. A main-track paper needs one of the extensions below.
-- **The guarantee is relative to the discrete model.** The grid MDP *is* the plant. Transferring the guarantee to real flight requires a *sound abstraction* of continuous dynamics, meaning a proof that every continuous behaviour is matched by the grid model, e.g. through over-approximated reachable sets per cell. That is the most valuable next research step.
-- **The gust model is adversarial and unbounded.** Allowing a gust at every step is what makes the east column a trap. A bounded-gust (fairness) assumption, e.g. at most $k$ consecutive gusts, adds a counter to the product and would shrink the conservatism. It is a natural, quantifiable extension.
-- **Scale.** Tabular Q-learning on 84k product states is the deliberate simple choice. The shield interface is policy-agnostic, so a shielded DQN or PPO with action masking is a drop-in replacement.
+---
 
-## References
+## 3. Install nuPlan support
 
-- M. Alshiekh, R. Bloem, R. Ehlers, B. Könighofer, S. Niekum, U. Topcu. *Safe Reinforcement Learning via Shielding.* AAAI 2018.
-- R. Bloem, B. Könighofer, R. Könighofer, C. Wang. *Shield Synthesis: Runtime Enforcement for Reactive Systems.* TACAS 2015.
-- N. Jansen, B. Könighofer, S. Junges, A. Serban, R. Bloem. *Safe Reinforcement Learning Using Probabilistic Shields.* CONCUR 2020.
-- F. Bacchus, F. Kabanza. *Using Temporal Logics to Express Search Control Knowledge for Planning.* Artificial Intelligence 116, 2000.
-- C. Baier, J.-P. Katoen. *Principles of Model Checking.* MIT Press, 2008.
-- O. Kupferman, M. Y. Vardi. *Model Checking of Safety Properties.* Formal Methods in System Design 19, 2001.
-- C. J. C. H. Watkins, P. Dayan. *Q-learning.* Machine Learning 8, 1992.
-- C. J. Clopper, E. S. Pearson. *The Use of Confidence or Fiducial Limits Illustrated in the Case of the Binomial.* Biometrika 26, 1934.
+Preferred:
+
+```bash
+pip install nuplan-devkit
+```
+
+Alternatively:
+
+```bash
+pip install pyogrio geopandas
+```
+
+for direct map-file access.
+
+---
+
+## 4. Optional Waymo support
+
+```bash
+pip install waymo-open-dataset-tf-2-12-0
+```
+
+Only the Scenario representation is required by the reader.
+
+---
+
+## 5. Optional verification tools
+
+For ONNX/VNNLIB export and external verification:
+
+```bash
+pip install onnx
+```
+
+The exported models can subsequently be checked using compatible
+verification tooling such as alpha-beta-CROWN.
+
+---
+
+# 🚀 Quick Start
+
+Before using real datasets, run the synthetic self-test.
+
+```bash
+python -m cavs_vla selftest --workdir /tmp/cavs_selftest
+```
+
+Then run:
+
+```bash
+python tests/test_numpy_stack.py
+```
+
+The self-test should report:
+
+```text
+SELFTEST PASSED
+```
+
+Do not proceed to full training if the self-test fails.
+
+---
+
+# 🏗️ Build the Dataset
+
+Start with the small nuPlan split:
+
+```bash
+python -m cavs_vla build-data \
+    --config configs/nuplan_mini.yaml
+```
+
+Check the action-space fit:
+
+```bash
+python -m cavs_vla kinematic-check \
+    --config configs/nuplan_mini.yaml
+```
+
+After validating the pipeline, configure the full nuPlan/WOMD dataset.
+
+---
+
+# 🌪️ Estimate Safety Disturbances
+
+Estimate the disturbance envelope:
+
+```bash
+python -m cavs_vla estimate-disturbance \
+    --config configs/default.yaml
+```
+
+The resulting estimate is used to configure:
+
+```text
+hj.w_bar
+```
+
+Build the HJ safety representation:
+
+```bash
+python -m cavs_vla build-hj \
+    --config configs/default.yaml
+```
+
+---
+
+# 🧠 Train the Policy
+
+For distributed training:
+
+```bash
+torchrun \
+    --nproc_per_node=8 \
+    -m cavs_vla train \
+    --config configs/full_nuplan_womd.yaml \
+    --run main
+```
+
+Adjust `--nproc_per_node` to match the available GPU resources.
+
+---
+
+# 📏 Calibrate the Safety Predictor
+
+After training:
+
+```bash
+python -m cavs_vla calibrate \
+    --config <config> \
+    --ckpt <run>/best.pt
+```
+
+This produces the conformal calibration information used by the safety
+pipeline.
+
+---
+
+# 🔐 Verify the Trained Model
+
+Run neural verification:
+
+```bash
+python -m cavs_vla verify \
+    --config <config> \
+    --ckpt <run>/best.pt
+```
+
+The verification pipeline produces the information required to inspect
+certificate width and export verification artifacts.
+
+---
+
+# 🧪 Open-Loop Evaluation
+
+Run the open-loop evaluation:
+
+```bash
+python -m cavs_vla eval-open \
+    --config <config> \
+    --ckpt <run>/best.pt
+```
+
+This evaluation can include:
+
+* baseline comparisons
+* input ablations
+* alternative prediction methods
+
+---
+
+# 🔄 Closed-Loop Evaluation
+
+Run the closed-loop evaluation:
+
+```bash
+python -m cavs_vla eval-closed \
+    --config <config> \
+    --ckpt <run>/best.pt
+```
+
+For selected methods:
+
+```bash
+python -m cavs_vla eval-closed \
+    --config <config> \
+    --ckpt <run>/best.pt \
+    --methods B1,B7
+```
+
+---
+
+# 🧪 Stress Testing
+
+## Model mismatch
+
+Test conditions outside the nominal disturbance assumptions:
+
+```bash
+python -m cavs_vla eval-closed \
+    --config <config> \
+    --ckpt <run>/best.pt \
+    --methods B1,B7 \
+    --tag mismatch \
+    --set sim.accel_noise=1.0 sim.tau_a=0.3
+```
+
+---
+
+## Latency
+
+Test increased planning/control latency:
+
+```bash
+python -m cavs_vla eval-closed \
+    --config <config> \
+    --ckpt <run>/best.pt \
+    --methods B1,B7 \
+    --tag latency \
+    --set sim.replan_interval=5 sim.latency_steps=2
+```
+
+---
+
+## Multi-CAV coordination
+
+Run the multi-controlled-vehicle setting:
+
+```bash
+python -m cavs_vla eval-closed \
+    --config <config> \
+    --ckpt <run>/best.pt \
+    --methods B1,B6,B7 \
+    --tag cav4 \
+    --set sim.num_controlled=4
+```
+
+---
+
+# 🧩 Safety Ablations
+
+The implementation provides a configurable method table.
+
+|   ID   |    Certificate    |  HJ |     MPC    | Fallback    |
+| :----: | :---------------: | :-: | :--------: | :---------- |
+| **B0** | Expert log replay |  –  |      –     | –           |
+| **B1** |         –         |  –  |      –     | –           |
+| **B2** |         –         |  –  |  Always on | –           |
+| **B3** |         –         |  ✓  |      –     | HJ backup   |
+| **B4** |         ✓         |  –  |      –     | Max braking |
+| **B5** |         ✓         |  –  | On failure | Max braking |
+| **B6** |    Point output   |  ✓  | On failure | HJ backup   |
+| **B7** |         ✓         |  ✓  | On failure | HJ backup   |
+
+The complete method configuration is defined through:
+
+```text
+config.METHOD_TABLE
+```
+
+---
+
+# 🔁 Counterexample-Guided Refinement
+
+Failures can be mined from the training split:
+
+```bash
+python -m cavs_vla mine-failures \
+    --config <config> \
+    --ckpt <run>/best.pt \
+    --method B1 \
+    --out results/failures_train.json
+```
+
+Run counterexample-guided refinement:
+
+```bash
+python -m cavs_vla ceg \
+    --config <config> \
+    --ckpt <run>/best.pt \
+    --failures results/failures_train.json \
+    --run ceg1
+```
+
+After refinement, rerun the evaluation pipeline.
+
+---
+
+# 🚦 nuPlan Closed-Loop Evaluation
+
+The repository includes a nuPlan planner adapter:
+
+```text
+cavs_vla.nuplan_planner.CavsPlanner
+```
+
+Use the adapter for official nuPlan closed-loop evaluation.
+
+The implementation distinguishes between:
+
+```text
+Repository log simulator
+        ≠
+Official nuPlan simulator
+```
+
+For official nuPlan closed-loop results, use the provided planner adapter and
+the corresponding nuPlan evaluation infrastructure.
+
+---
+
+# 🎮 CARLA
+
+A CARLA server must be running before executing CARLA experiments.
+
+Run:
+
+```bash
+python -m cavs_vla carla \
+    --config <config> \
+    --ckpt <run>/best.pt \
+    --method B7
+```
+
+To measure disturbances:
+
+```bash
+python -m cavs_vla carla \
+    --config <config> \
+    --ckpt <run>/best.pt \
+    --measure-disturbance
+```
+
+Make sure the CARLA client and server versions are compatible.
+
+---
+
+# 🔁 Full Pipeline
+
+The main pipeline can also be chained through:
+
+```bash
+scripts/run_pipeline.sh
+```
+
+The script covers the primary stages:
+
+```text
+Data
+ ↓
+Kinematic Check
+ ↓
+Disturbance Estimation
+ ↓
+HJ Construction
+ ↓
+Training
+ ↓
+Calibration / Verification
+ ↓
+Evaluation
+ ↓
+Failure Mining / Refinement
+```
+
+For reproducibility, it is recommended to run the individual stages first and
+inspect their outputs before using the complete pipeline script.
+
+---
+
+# 🧪 Recommended Reproducibility Workflow
+
+A clean reproduction should follow this order:
+
+```text
+┌──────────────────────┐
+│ 1. Install           │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│ 2. Self-Test         │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│ 3. Prepare Data      │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│ 4. Kinematic Check   │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│ 5. HJ Construction   │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│ 6. Train Policy      │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│ 7. Calibration       │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│ 8. Verification      │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│ 9. Evaluation        │
+└──────────┬───────────┘
+           ▼
+┌──────────────────────┐
+│ 10. Stress Tests     │
+└──────────────────────┘
+```
+
+---
+
+# 🔬 Verification Workflow
+
+The verification-oriented implementation follows:
+
+```text
+Neural Policy
+      │
+      ▼
+ONNX Export
+      │
+      ▼
+VNNLIB Specification
+      │
+      ▼
+IBP Bounds
+      │
+      ▼
+Certified Control Set
+      │
+      ▼
+Safety Stack
+```
+
+IBP bounds are computed with the verification-compatible neural operations
+implemented in the model layers.
+
+For high-assurance verification experiments, representative cases should be
+rechecked with an external neural verifier using the exported ONNX/VNNLIB
+representation.
+
+---
+
+# 📊 Outputs
+
+Typical experiment outputs are stored under:
+
+```text
+results/
+```
+
+Depending on the experiment, outputs can include:
+
+```text
+results/
+├── checkpoints/
+├── calibration/
+├── verification/
+├── failures/
+├── evaluation/
+├── carla/
+└── logs/
+```
+
+Exact output locations are determined by the selected configuration and run
+name.
+
+---
+
+# ⚙️ Configuration
+
+Configuration files are stored in:
+
+```text
+configs/
+```
+
+Main configurations include:
+
+```text
+configs/default.yaml
+configs/nuplan_mini.yaml
+configs/full_nuplan_womd.yaml
+```
+
+Important parameters include:
+
+* dataset paths
+* map paths
+* training parameters
+* dynamics parameters
+* disturbance bounds
+* HJ configuration
+* simulation parameters
+* latency
+* number of controlled vehicles
+* evaluation settings
+
+Avoid hard-coding local paths in source files. Use configuration files so that
+experiments remain portable across machines.
+
+---
+
+# 🔒 Safety Assumptions
+
+The safety guarantees provided by the implementation are conditional on the
+assumptions used by the corresponding safety components.
+
+These include assumptions concerning:
+
+* kinematic dynamics
+* actuator behavior
+* disturbance bounds
+* initial-state region
+* other-agent acceleration bounds
+* conformal prediction coverage
+* numerical outward padding for IBP
+
+The repository should therefore be interpreted as a **research implementation
+of compositional safety mechanisms**, not as an unconditional guarantee of
+real-world autonomous-driving safety.
+
+---
+
+# ⚠️ Important Limitations
+
+## No camera input
+
+The current nuPlan and WOMD pipeline does not use raw camera images.
+
+The language input is derived from route information.
+
+The safety stack is policy-agnostic and can be connected to another driving
+policy through the expected control and trajectory interfaces.
+
+---
+
+## Longitudinal HJ model
+
+The current HJ formulation models longitudinal interaction along the proposed
+path.
+
+Lateral interactions are handled through the corresponding prediction and
+safety mechanisms rather than being represented by a complete lateral HJ
+reachable-set formulation.
+
+---
+
+## Conformal coverage
+
+Conformal prediction coverage relies on the relevant exchangeability
+assumption.
+
+Closed-loop coverage should therefore be measured and reported for the
+operating distribution being evaluated.
+
+---
+
+## WOMD route information
+
+WOMD does not provide the same route representation used by nuPlan.
+
+The current pipeline reconstructs the route from the logged path and marks this
+information as `oracle` in the dataset manifest.
+
+For an ablation without route information:
+
+```yaml
+data:
+    use_route: false
+```
+
+---
+
+## Numerical verification
+
+IBP bounds are implemented with an outward numerical pad.
+
+For formal verification claims, representative cases should be independently
+checked using the exported ONNX/VNNLIB representation and an external verifier.
+
+---
+
+## Simulator distinction
+
+The repository includes a batched log simulator for controlled experimentation.
+
+This simulator is **not the official nuPlan simulator**.
+
+Official nuPlan closed-loop evaluation should use:
+
+```text
+cavs_vla.nuplan_planner.CavsPlanner
+```
+
+through the corresponding nuPlan evaluation infrastructure.
+
+---
+
+# 🧰 Useful Commands
+
+### Self-test
+
+```bash
+python -m cavs_vla selftest --workdir /tmp/cavs_selftest
+```
+
+### Dataset construction
+
+```bash
+python -m cavs_vla build-data \
+    --config configs/nuplan_mini.yaml
+```
+
+### Kinematic validation
+
+```bash
+python -m cavs_vla kinematic-check \
+    --config configs/nuplan_mini.yaml
+```
+
+### Disturbance estimation
+
+```bash
+python -m cavs_vla estimate-disturbance \
+    --config configs/default.yaml
+```
+
+### HJ construction
+
+```bash
+python -m cavs_vla build-hj \
+    --config configs/default.yaml
+```
+
+### Training
+
+```bash
+torchrun \
+    --nproc_per_node=8 \
+    -m cavs_vla train \
+    --config configs/full_nuplan_womd.yaml \
+    --run main
+```
+
+### Calibration
+
+```bash
+python -m cavs_vla calibrate \
+    --config <config> \
+    --ckpt <checkpoint>
+```
+
+### Verification
+
+```bash
+python -m cavs_vla verify \
+    --config <config> \
+    --ckpt <checkpoint>
+```
+
+### Open-loop evaluation
+
+```bash
+python -m cavs_vla eval-open \
+    --config <config> \
+    --ckpt <checkpoint>
+```
+
+### Closed-loop evaluation
+
+```bash
+python -m cavs_vla eval-closed \
+    --config <config> \
+    --ckpt <checkpoint>
+```
+
+### Failure mining
+
+```bash
+python -m cavs_vla mine-failures \
+    --config <config> \
+    --ckpt <checkpoint> \
+    --method B1 \
+    --out results/failures_train.json
+```
+
+### Counterexample refinement
+
+```bash
+python -m cavs_vla ceg \
+    --config <config> \
+    --ckpt <checkpoint> \
+    --failures results/failures_train.json \
+    --run ceg1
+```
+
+### CARLA
+
+```bash
+python -m cavs_vla carla \
+    --config <config> \
+    --ckpt <checkpoint> \
+    --method B7
+```
+
+---
+
+# 📝 Development Notes
+
+The project is intended for research use.
+
+Before committing changes, it is recommended to run:
+
+```bash
+python -m cavs_vla selftest --workdir /tmp/cavs_selftest
+python tests/test_numpy_stack.py
+```
+
+Then validate the affected pipeline stage before running full-scale experiments.
+
+For changes to safety-critical modules, test both:
+
+```text
+Nominal behavior
++
+Failure / boundary behavior
+```
+
+---
+
+# 📌 Reproducibility Checklist
+
+Before reporting results from a new experiment, record:
+
+* [ ] Git commit
+* [ ] Configuration file
+* [ ] Dataset version
+* [ ] Dataset split
+* [ ] Random seed
+* [ ] Checkpoint
+* [ ] Hardware
+* [ ] Software environment
+* [ ] Safety assumptions
+* [ ] Disturbance configuration
+* [ ] Latency configuration
+* [ ] Evaluation method
+* [ ] Verification artifacts
+
+A recommended run directory is:
+
+```text
+results/<experiment>/
+├── config.yaml
+├── checkpoint.pt
+├── metrics.json
+├── verification.json
+├── environment.txt
+└── README.md
+```
+
+---
+
+# 📄 Associated Research
+
+This repository contains the implementation and experimental infrastructure
+associated with the research project.
+
+The README intentionally focuses on:
+
+* software architecture
+* installation
+* data interfaces
+* safety modules
+* commands
+* reproducibility
+* implementation assumptions
+
+For the scientific formulation, methodology, theoretical analysis, and
+experimental discussion, please refer to the associated manuscript.
+
+---
+
+# 📜 License
+
+See [`LICENSE`](LICENSE) for the applicable license terms.
+
+---
+
+# 🙏 Acknowledgements
+
+This implementation builds on publicly available datasets, simulators, and
+research software ecosystems.
+
+Please follow the respective licenses and citation requirements of:
+
+* **nuPlan**
+* **Waymo Open Motion Dataset**
+* **CARLA**
+* **PyTorch**
+* **ONNX**
+* Other third-party dependencies listed in `requirements.txt`
+
+---
+
+# ⭐ If You Use This Repository
+
+If this implementation contributes to your research, please cite the
+associated work and follow the citation requirements of the underlying
+datasets and software dependencies.
+
+Citation information for this repository can be added here when the associated
+research is publicly released.
+
+---
+
+<div align="center">
+
+## CAVS-VLA v2
+
+**Learn → Verify → Predict → Shield → Execute**
+
+*A modular research framework for safety-aware multi-agent autonomous driving.*
+
+</div>
