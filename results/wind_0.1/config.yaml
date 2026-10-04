@@ -1,0 +1,83 @@
+# digest: 21aaa7c31a88
+world:
+  width: 8
+  depth: 8
+  max_alt: 4
+  battery: 30
+  low_battery: 10
+  pads:
+  - - 6
+    - 6
+  - - 1
+    - 6
+  nfz:
+  - - 3
+    - 3
+  - - 3
+    - 4
+  - - 4
+    - 3
+  - - 4
+    - 4
+  buildings:
+  - - 5
+    - 2
+    - 2
+  - - 2
+    - 5
+    - 3
+  - - 6
+    - 4
+    - 1
+  wind_dir:
+  - 1
+  - 0
+  wind_prob: 0.1
+  wind_min_alt: 2
+  cost_lateral: 1
+  cost_hover: 1
+  cost_up: 2
+  cost_down: 1
+  start_alt: 3
+  start_battery_min: 20
+spec:
+  safety_ltl: G(!crash & !collision & !nfz & !geofence & !empty) & G(low -> F[<=8]
+    landed)
+  ctl:
+  - AG !spec_violated
+  - AF landed
+  - EF landed
+  - A[!spec_violated U landed]
+  pctl:
+  - P=? [ !spec_violated U landed ]
+  - P=? [ F spec_violated ]
+  - P=? [ F landed ]
+  - R=? [ F terminal ]
+  max_monitor_states: 10000
+rl:
+  episodes: 100000
+  alpha: 0.1
+  gamma: 0.98
+  eps_start: 1.0
+  eps_end: 0.05
+  eps_decay_frac: 0.7
+  reward_land: 10.0
+  penalty_violation: 10.0
+  step_cost: 0.1
+shield:
+  prob_lambda: 0.95
+  value_tol: 1.0e-12
+experiment:
+  name: wind_0.1
+  methods:
+  - unshielded
+  - prob_shield
+  - sure_shield
+  seeds:
+  - 0
+  - 1
+  - 2
+  - 3
+  - 4
+  out_dir: results
+  smc_samples: 2000

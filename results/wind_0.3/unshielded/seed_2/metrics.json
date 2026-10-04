@@ -1,0 +1,79 @@
+{
+  "method": "unshielded",
+  "seed": 2,
+  "train_episodes": 100000,
+  "train_steps": 834446,
+  "train_time_s": 17.472031155999957,
+  "train_violations": 51109,
+  "train_violation_rate": 0.51109,
+  "train_violations_from_guaranteed_starts": 51109,
+  "train_success_rate_last10pct": 0.9449,
+  "train_return_last10pct": 7.99441,
+  "verify_time_s": 0.020775990999936766,
+  "smc_safe_landing": {
+    "estimate": 0.999,
+    "ci_low": 0.9963923714301715,
+    "ci_high": 0.9998788724094432,
+    "successes": 1998,
+    "samples": 2000
+  },
+  "closed_loop_states": 2385,
+  "ctl": {
+    "AG !spec_violated": {
+      "fraction_initial_satisfied": 0.21879815100154082,
+      "all": false
+    },
+    "AF landed": {
+      "fraction_initial_satisfied": 0.21879815100154082,
+      "all": false
+    },
+    "EF landed": {
+      "fraction_initial_satisfied": 1.0,
+      "all": true
+    },
+    "A[!spec_violated U landed]": {
+      "fraction_initial_satisfied": 0.21879815100154082,
+      "all": false
+    }
+  },
+  "pctl": {
+    "P=? [ !spec_violated U landed ]": {
+      "mean": 0.9988957225382538,
+      "min": 0.4131689482401599,
+      "max": 1.0,
+      "mean_finite": 0.9988957225382538,
+      "fraction_finite": 1.0
+    },
+    "P=? [ F spec_violated ]": {
+      "mean": 0.001104277461746071,
+      "min": 0.0,
+      "max": 0.58683105175984,
+      "mean_finite": 0.001104277461746071,
+      "fraction_finite": 1.0
+    },
+    "P=? [ F landed ]": {
+      "mean": 0.9988957225382538,
+      "min": 0.4131689482401599,
+      "max": 1.0,
+      "mean_finite": 0.9988957225382538,
+      "fraction_finite": 1.0
+    },
+    "R=? [ F terminal ]": {
+      "mean": 8.791272617218564,
+      "min": 3.3,
+      "max": 14.905349558546055,
+      "mean_finite": 8.791272617218564,
+      "fraction_finite": 1.0
+    }
+  },
+  "smc_consistent_with_exact": true,
+  "counterexample": [
+    "(x=2, y=4, z=3, battery=20) | monitor q0: (G (!collision & !crash & !empty & !geofence & !nfz) & G (!low | F[<=8] landed))  --W-->",
+    "(x=2, y=4, z=3, battery=19) | monitor q0: (G (!collision & !crash & !empty & !geofence & !nfz) & G (!low | F[<=8] landed))  --W-->",
+    "(x=1, y=4, z=3, battery=18) | monitor q0: (G (!collision & !crash & !empty & !geofence & !nfz) & G (!low | F[<=8] landed))  --HOVER-->",
+    "(x=2, y=4, z=3, battery=17) | monitor q0: (G (!collision & !crash & !empty & !geofence & !nfz) & G (!low | F[<=8] landed))  --W-->",
+    "(x=2, y=4, z=3, battery=16) | monitor q0: (G (!collision & !crash & !empty & !geofence & !nfz) & G (!low | F[<=8] landed))  --W-->",
+    "(x=2, y=4, z=3, battery=15) | monitor q0: (G (!collision & !crash & !empty & !geofence & !nfz) & G (!low | F[<=8] landed))  --HOVER-->",
+    "NFZ | monitor q2: false"
+  ]
+}

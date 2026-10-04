@@ -1,0 +1,17 @@
+{
+  "unshielded": {
+    "P_safe_landing": 0.002067521683129609,
+    "P_safe_landing_min_start": 8.366193842799703e-07,
+    "expected_steps": 5.096664771658392
+  },
+  "prob_shield": {
+    "P_safe_landing": 0.9853832805623343,
+    "P_safe_landing_min_start": 0.9773998878358695,
+    "expected_steps": 21.445812820414215
+  },
+  "sure_shield": {
+    "P_safe_landing": 0.999998855759141,
+    "P_safe_landing_min_start": 0.999737856,
+    "expected_steps": 21.56889351149815
+  }
+}

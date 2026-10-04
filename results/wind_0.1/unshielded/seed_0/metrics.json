@@ -1,0 +1,74 @@
+{
+  "method": "unshielded",
+  "seed": 0,
+  "train_episodes": 100000,
+  "train_steps": 873896,
+  "train_time_s": 16.666459065000254,
+  "train_violations": 46120,
+  "train_violation_rate": 0.4612,
+  "train_violations_from_guaranteed_starts": 46120,
+  "train_success_rate_last10pct": 0.968,
+  "train_return_last10pct": 8.5068,
+  "verify_time_s": 0.020945525000115595,
+  "smc_safe_landing": {
+    "estimate": 0.998,
+    "ci_low": 0.9948871913946538,
+    "ci_high": 0.999454806874789,
+    "successes": 1996,
+    "samples": 2000
+  },
+  "closed_loop_states": 2223,
+  "ctl": {
+    "AG !spec_violated": {
+      "fraction_initial_satisfied": 0.07858243451463791,
+      "all": false
+    },
+    "AF landed": {
+      "fraction_initial_satisfied": 0.07858243451463791,
+      "all": false
+    },
+    "EF landed": {
+      "fraction_initial_satisfied": 1.0,
+      "all": true
+    },
+    "A[!spec_violated U landed]": {
+      "fraction_initial_satisfied": 0.07858243451463791,
+      "all": false
+    }
+  },
+  "pctl": {
+    "P=? [ !spec_violated U landed ]": {
+      "mean": 0.9984228305371029,
+      "min": 0.8425557555480002,
+      "max": 1.0,
+      "mean_finite": 0.9984228305371029,
+      "fraction_finite": 1.0
+    },
+    "P=? [ F spec_violated ]": {
+      "mean": 0.0015771694628972767,
+      "min": 0.0,
+      "max": 0.15744424445200003,
+      "mean_finite": 0.0015771694628972767,
+      "fraction_finite": 1.0
+    },
+    "P=? [ F landed ]": {
+      "mean": 0.9984228305371029,
+      "min": 0.8425557555480002,
+      "max": 1.0,
+      "mean_finite": 0.9984228305371029,
+      "fraction_finite": 1.0
+    },
+    "R=? [ F terminal ]": {
+      "mean": 8.174205928014073,
+      "min": 3.1,
+      "max": 14.047991296579418,
+      "mean_finite": 8.174205928014073,
+      "fraction_finite": 1.0
+    }
+  },
+  "smc_consistent_with_exact": true,
+  "counterexample": [
+    "(x=1, y=6, z=3, battery=30) | monitor q0: (G (!collision & !crash & !empty & !geofence & !nfz) & G (!low | F[<=8] landed))  --S-->",
+    "COLLISION | monitor q2: false"
+  ]
+}

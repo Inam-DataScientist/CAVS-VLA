@@ -1,0 +1,53 @@
+{
+  "unshielded": {
+    "kind": "none",
+    "iterations": 0,
+    "synthesis_time_s": 0.0,
+    "start_states": 649,
+    "start_fraction_guaranteed": 1.0,
+    "min_start_safety_probability": 1.0,
+    "mean_allowed_actions": 7.0,
+    "certificate": {
+      "ok": false,
+      "winning_size": 84546,
+      "bad_in_winning": 7686,
+      "empty_rows": 0,
+      "escaping_pairs": 0,
+      "example": ""
+    }
+  },
+  "prob_shield": {
+    "kind": "prob",
+    "iterations": 29,
+    "synthesis_time_s": 0.37479132499993284,
+    "start_states": 649,
+    "start_fraction_guaranteed": 0.8613251155624037,
+    "min_start_safety_probability": 0.999737856,
+    "mean_allowed_actions": 3.6076677603487797,
+    "certificate": {
+      "ok": false,
+      "winning_size": 22259,
+      "bad_in_winning": 0,
+      "empty_rows": 0,
+      "escaping_pairs": 3242,
+      "example": "state (x=0, y=0, z=1, battery=10) | monitor q0: (G (!collision & !crash & !empty & !geofence & !nfz) & G (!low | F[<=8] landed)) action 5 -> (x=0, y=0, z=2, battery=8) | monitor q1: (F[<=7] landed & G (!collision & !crash & !empty & !geofence & !nfz) & G (!low | F[<=8] landed))"
+    }
+  },
+  "sure_shield": {
+    "kind": "sure",
+    "iterations": 29,
+    "synthesis_time_s": 0.795569099000204,
+    "start_states": 649,
+    "start_fraction_guaranteed": 0.847457627118644,
+    "min_start_safety_probability": 0.999737856,
+    "mean_allowed_actions": 3.475125944584383,
+    "certificate": {
+      "ok": true,
+      "winning_size": 22242,
+      "bad_in_winning": 0,
+      "empty_rows": 0,
+      "escaping_pairs": 0,
+      "example": ""
+    }
+  }
+}
