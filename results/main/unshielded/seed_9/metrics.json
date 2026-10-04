@@ -1,0 +1,74 @@
+{
+  "method": "unshielded",
+  "seed": 9,
+  "train_episodes": 100000,
+  "train_steps": 847358,
+  "train_time_s": 16.504749326000137,
+  "train_violations": 48515,
+  "train_violation_rate": 0.48515,
+  "train_violations_from_guaranteed_starts": 48515,
+  "train_success_rate_last10pct": 0.9528,
+  "train_return_last10pct": 8.19163,
+  "verify_time_s": 0.0203082830000767,
+  "smc_safe_landing": {
+    "estimate": 0.9995,
+    "ci_low": 0.997217360165341,
+    "ci_high": 0.9999873411761314,
+    "successes": 1999,
+    "samples": 2000
+  },
+  "smc_consistent_with_exact": true,
+  "closed_loop_states": 2292,
+  "ctl": {
+    "AG !spec_violated": {
+      "fraction_initial_satisfied": 0.1679506933744222,
+      "all": false
+    },
+    "AF landed": {
+      "fraction_initial_satisfied": 0.1679506933744222,
+      "all": false
+    },
+    "EF landed": {
+      "fraction_initial_satisfied": 1.0,
+      "all": true
+    },
+    "A[!spec_violated U landed]": {
+      "fraction_initial_satisfied": 0.1679506933744222,
+      "all": false
+    }
+  },
+  "pctl": {
+    "P=? [ !spec_violated U landed ]": {
+      "mean": 0.9995654652011227,
+      "min": 0.7999999999994213,
+      "max": 1.0,
+      "mean_finite": 0.9995654652011227,
+      "fraction_finite": 1.0
+    },
+    "P=? [ F spec_violated ]": {
+      "mean": 0.00043453479887770345,
+      "min": 0.0,
+      "max": 0.20000000000057883,
+      "mean_finite": 0.00043453479887770345,
+      "fraction_finite": 1.0
+    },
+    "P=? [ F landed ]": {
+      "mean": 0.9995654652011227,
+      "min": 0.7999999999994213,
+      "max": 1.0,
+      "mean_finite": 0.9995654652011227,
+      "fraction_finite": 1.0
+    },
+    "R=? [ F terminal ]": {
+      "mean": 8.343171084518676,
+      "min": 3.2496,
+      "max": 15.552581184591423,
+      "mean_finite": 8.343171084518676,
+      "fraction_finite": 1.0
+    }
+  },
+  "counterexample": [
+    "(x=7, y=7, z=3, battery=30) | monitor q0: (G (!collision & !crash & !empty & !geofence & !nfz) & G (!low | F[<=8] landed))  --S-->",
+    "GEOFENCE | monitor q2: false"
+  ]
+}
